@@ -7,33 +7,34 @@ const flash = require('express-flash');
 const crypto = require('crypto');
 const { body, validationResult } = require('express-validator');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const fs = require('fs');
 
 const adminLayout = '../views/layouts/admin';
-const mainLayout= '../views/layouts/login';
+const mainLayout = '../views/layouts/login';
 const jwtSecret = process.env.JWT_SECRET;
-
+const path = require('path');
 const app = express();
 app.use(flash());
 
 // JWT cek login
-const authMiddleware = (req, res, next ) => {
+const authMiddleware = (req, res, next) => {
   const token = req.cookies.token;
   console.log("Token:", token); // Tambahkan log untuk menampilkan nilai token
 
-  if(!token) {
-    return res.status(401).json( { message: 'Unauthorized'} );
+  if (!token) {
+    return res.status(401).json({ message: 'Unauthorized' });
   }
 
   try {
     const decoded = jwt.verify(token, jwtSecret);
     req.userId = decoded.userId;
     next();
-  } catch(error) {
+  } catch (error) {
     console.log("Error decoding token:", error); // Tambahkan log untuk menampilkan pesan error saat token tidak valid
-    res.status(401).json( { message: 'Unauthorized'} );
+    res.status(401).json({ message: 'Unauthorized' });
   }
 }
-
 
 //Get dari Menu Login
 router.get('/admin', async (req, res) => {
@@ -46,13 +47,11 @@ router.get('/admin', async (req, res) => {
   }
 });
 
-
-
 //mengecek login
 router.post('/admin', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
     const user = await User.findOne({ username });
 
     // Periksa apakah pengguna ditemukan
@@ -86,11 +85,9 @@ router.post('/admin', async (req, res) => {
   }
 });
 
-
-
 //Get Menu dashboard
 router.get('/dashboard', authMiddleware, async (req, res) => {
- try {
+  try {
     const user = await User.findById(req.userId);
 
     // Memeriksa peran pengguna
@@ -100,6 +97,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
 
     const data = await Post.find();
     res.render('admin/dashboard', {
+      user,
       data,
       layout: adminLayout
     });
@@ -110,53 +108,62 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
   }
 });
 
-
-
 //GET post yang dibuat
 router.get('/add-post', authMiddleware, async (req, res) => {
   try {
-
     const data = await Post.find();
     res.render('admin/add-post', {
+      user: req.session.user,
       layout: adminLayout
     });
 
   } catch (error) {
     console.log(error);
   }
-
 });
 
+// Image upload configuration
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'public/uploads');
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.fieldname + "_" + Date.now() + "_" + file.originalname);
+  },
+});
+
+const upload = multer({ storage: storage }).single("image");
 
 // POST create Post
-router.post('/add-post', authMiddleware, async (req, res) => {
+router.post('/add-post', authMiddleware, upload, async (req, res) => {
   try {
-    try {
-      const newPost = new Post({
-        title: req.body.title,
-        body: req.body.body
-      });
-
-      await Post.create(newPost);
-      res.redirect('/dashboard');
-    } catch (error) {
-      console.log(error);
+    if (!req.file) {
+      throw new Error('No file uploaded');
     }
 
+    const newPost = new Post({
+      title: req.body.title,
+      image: req.file.filename,
+      body: req.body.body,
+      category: req.body.category
+    });
+
+    await newPost.save();
+    res.redirect('/dashboard');
   } catch (error) {
     console.log(error);
+    res.status(400).json({ message: error.message, type: 'danger' });
   }
 });
-
 
 // Get dari Post
 router.get('/edit-post/:id', authMiddleware, async (req, res) => {
   try {
 
-
     const data = await Post.findOne({ _id: req.params.id });
 
     res.render('admin/edit-post', {
+      user: req.session.user,
       data,
       layout: adminLayout
     })
@@ -167,28 +174,60 @@ router.get('/edit-post/:id', authMiddleware, async (req, res) => {
 
 });
 
-
 // put untuk Post
-router.put('/edit-post/:id', authMiddleware, async (req, res) => {
+router.put('/edit-post/:id', authMiddleware, upload, async (req, res) => {
   try {
+    let id = req.params.id;
+    let new_image = '';
 
-    await Post.findByIdAndUpdate(req.params.id, {
+    if (req.file) {
+      new_image = req.file.filename;
+      try {
+        fs.unlinkSync(path.join(__dirname, '../public/uploads/', req.body.old_image));
+      } catch (err) {
+        console.log(err);
+      }
+    } else {
+      new_image = req.body.old_image;
+    }
+
+    await Post.findByIdAndUpdate(id, {
+      user: req.session.user,
       title: req.body.title,
+      image: new_image,
       body: req.body.body,
+      category: req.body.category,
       updatedAt: Date.now()
     });
 
+    req.session.message = {
+      type: 'success',
+      message: 'Post updated successfully!',
+    };
     res.redirect(`/dashboard`);
 
   } catch (error) {
     console.log(error);
+    res.json({ message: error.message, type: 'danger' });
   }
-
 });
 
+router.post('/admin', async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
+    if (req.body.username === 'admin' && req.body.password === 'password') {
+      res.send('You are logged in.')
+    } else {
+      res.send('Wrong username or password');
+    }
 
-router.get('/register', async (req, res)=> {
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+router.get('/register', async (req, res) => {
   res.render('admin/register', { layout: mainLayout });
 })
 
@@ -221,22 +260,17 @@ router.post('/register', async (req, res) => {
   }
 });
 
-
-
-
 // Delete Post
 router.delete('/delete-post/:id', authMiddleware, async (req, res) => {
 
   try {
-    await Post.deleteOne( { _id: req.params.id } );
+    await Post.deleteOne({ _id: req.params.id });
     res.redirect('/dashboard');
   } catch (error) {
     console.log(error);
   }
 
 });
-
-
 
 // Get Logout 
 router.get('/logout', (req, res) => {
@@ -255,7 +289,7 @@ router.get('/logout', (req, res) => {
 router.get('/profile', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
-    res.render('profile', { 
+    res.render('profile', {
       user,
       currentRoute: '/profile', // tambahkan currentRoute ke dalam objek yang akan dirrender
     });
@@ -270,12 +304,12 @@ router.post('/update-username', authMiddleware, async (req, res) => {
   try {
     const { newUsername } = req.body;
     const user = await User.findById(req.userId);
-    
+
     // Periksa apakah pengguna ditemukan
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
+
     if (user.role === 'admin') {
       console.log('Admin tidak dapat mengedit username.'); // sebagai tanda bahwa admin tidak bisa ganti username
       return res.status(403).json({ message: 'Admin tidak dapat mengedit username.' });
@@ -285,7 +319,7 @@ router.post('/update-username', authMiddleware, async (req, res) => {
       console.log('Username tidak boleh "admin".'); // console log pesan bahwa username tidak boleh 'admin'
       return res.status(403).json({ message: 'Username tidak boleh "admin".' });
     }
-    
+
     const existingUser = await User.findOne({ username: newUsername });
     if (existingUser) {
       console.log('Username sudah digunakan, silakan pilih username lain.'); // console log pesan bahwa username sudah digunakan
@@ -295,7 +329,7 @@ router.post('/update-username', authMiddleware, async (req, res) => {
     user.username = newUsername;
     await user.save();
 
-    console.log('Username updated successfully:', newUsername); 
+    console.log('Username updated successfully:', newUsername);
 
     // Kirim respons dengan data pengguna yang diperbarui
     req.session.user.username = newUsername;
@@ -305,6 +339,5 @@ router.post('/update-username', authMiddleware, async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
 
 module.exports = router;

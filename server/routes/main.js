@@ -130,7 +130,6 @@ router.get('/post/:id', async (req, res) => {
     res.render('post', { 
       user : req.session.user,
       layout: mainLayout, 
-      locals,
       postData,
       comments, // Pass comments data to the view
       currentRoute: `/post/${slug}`,
@@ -165,7 +164,6 @@ router.post('/search', async (req, res) => {
 
     res.render("search", {
       data,
-      locals,
       currentRoute: '/',
       layout: LoginLayout
     });
